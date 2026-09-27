@@ -1,0 +1,160 @@
+{
+  "snaps": [
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": false,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": false,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": false,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": false,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    },
+    {
+      "t": 0,
+      "paused": true,
+      "ready": 0,
+      "duration": -1
+    }
+  ],
+  "events": [
+    "loadstart@0.00",
+    "play@0.00",
+    "error@0.00",
+    "play@0.00",
+    "waiting@0.00",
+    "titleResp={\"ok\":true}",
+    "openResp={\"ok\":false,\"busy\":1}",
+    "stalled@0.00",
+    "abort@0.00",
+    "emptied@0.00",
+    "loadstart@0.00",
+    "stalled@0.00"
+  ],
+  "mbEvents": [
+    "WINCAP:loadstart",
+    "DOCCAP:loadstart",
+    "CAPCHK: opening=false skip=false sealed=false hooked=false src=s/apps/media/_nmb_local_av.mp4 base=//F:/%E7%BC%96%E7%A8%8B/nw_mb/nw/tests/apps/media/index.html",
+    "WINCAP:play",
+    "DOCCAP:play",
+    "PAGECAP:error",
+    "MBQ>999002 open el=probeid src=s/apps/media/_nmb_local_av.mp4",
+    "WINCAP:play",
+    "DOCCAP:play",
+    "MBQ<999002 resp={\"ok\":false,\"busy\":1}",
+    "WINCAP:loadstart",
+    "DOCCAP:loadstart",
+    "CAPCHK: opening=false skip=false sealed=false hooked=false src=s/apps/media/_nmb_local_av.mp4 base=//F:/%E7%BC%96%E7%A8%8B/nw_mb/nw/tests/apps/media/index.html"
+  ],
+  "advanced": false,
+  "verdict": "STALLED",
+  "probe": {
+    "bridgeGuard": true,
+    "hostGuard": true,
+    "mediaApi": "function",
+    "hooked": null,
+    "hSkip": false,
+    "hOpening": false,
+    "hTries": 0,
+    "wantPlay": false,
+    "mediaErr": "function"
+  }
+}

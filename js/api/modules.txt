@@ -1,0 +1,38 @@
+# nw page-side API injection chain
+# =================================
+# Line order in this file IS the load order. The host enumerates api\*.js but
+# no longer relies on sorted file names -- it concatenates the modules in the
+# order listed below, wraps them in one shared IIFE, and injects the result.
+#
+# Consumed by TWO places, keep them in sync by reading THIS file:
+#   1. src\nw_host.cpp      -> AssembleApiModules()   (on-disk path at runtime)
+#   2. tools\embed-js.ps1   -> Get-ApiText()          (baked into nw.exe)
+#
+# Rules:
+#   - one file name per line; '#' starts a comment, blank lines are ignored
+#   - a module on disk that is not listed is appended AFTER this chain, sorted
+#   - a listed file that is missing is skipped (so a broken partial deploy
+#     still loads rather than dying)
+#
+# Why this chain is shaped like this (no module system, one shared scope):
+#   base       foundations (rpc / emitter / helpers), MUST be first
+#   app        nw.App, uses the foundations only
+#   internal   native binding mirror / sync whitelist, before window/menu
+#   window     nw.Window, uses internal
+#   menuitem   MenuItem tree serialization, before menu
+#   menu       nw.Menu, references menuitem
+#   rest       flat capability modules, mutually independent
+#   install    assembly: builds window.nw and takes over window.open, MUST be last
+
+base.js
+api_nw_app.js
+api_nw_internal.js
+api_nw_window.js
+api_nw_menuitem.js
+api_nw_menu.js
+api_nw_clipboard.js
+api_nw_shell.js
+api_nw_screen.js
+api_nw_shortcut.js
+api_nw_tray.js
+install.js

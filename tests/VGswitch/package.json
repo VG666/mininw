@@ -1,0 +1,15 @@
+{
+  "name": "vg-switch",
+  "version": "1.0.0",
+  "main": "src/index.html",
+  "window": {
+    "title": "VG Switch",
+    "width": 1080,
+    "height": 760,
+    "min_width": 880,
+    "min_height": 560,
+    "position": "center",
+    "resizable": true,
+    "frame": false
+  }
+}
