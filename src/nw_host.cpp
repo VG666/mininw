@@ -1508,6 +1508,20 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
     }
 
     switch (message) {
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL: {
+        // 滚轮消息按键盘焦点窗口投递，而桥模式下焦点可能短暂落在顶层壳窗口，
+        // 不能假设它一定命中承载页面的子窗口。保留 lParam 的屏幕坐标原样转发，
+        // 由桥窗口统一 ScreenToClient 后调用 mbFireMouseWheelEvent。
+        if (window && window->browser && host.bridge().getWindow) {
+            HWND browserHwnd = host.bridge().getWindow(window->browser);
+            if (browserHwnd && browserHwnd != hwnd && IsWindow(browserHwnd)) {
+                SendMessageW(browserHwnd, message, wparam, lparam);
+                return 0;
+            }
+        }
+        break;
+    }
     case WM_GETMINMAXINFO: {
         // setMinimumSize/setMaximumSize：MINMAXINFO 管的是外框尺寸，与 nw 语义一致。
         // 这里只拦用户拖拽；编程式 moveTo/resizeTo 的钳制在 ApiWindow 里另做。

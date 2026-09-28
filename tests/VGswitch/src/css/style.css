@@ -784,9 +784,11 @@ button {
 /* ---------- 编辑供应商弹窗 ---------- */
 
 .dialog.wide {
+  box-sizing: border-box;
   width: 660px;
   max-height: 86vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dialog-head {
