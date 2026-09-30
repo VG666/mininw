@@ -613,11 +613,10 @@ button {
 
 .auto-card {
   margin-bottom: 8px; /* 收紧与下方项卡的间距（列表 gap 14px → 约 6px） */
-  border-color: var(--accent);
-  background: linear-gradient(90deg, var(--accent-soft), rgba(0, 0, 0, 0) 60%), var(--card);
 }
 
 .auto-card.on {
+  border-color: var(--accent);
   background: linear-gradient(90deg, rgba(46, 229, 155, 0.18), rgba(0, 0, 0, 0) 60%), var(--card);
 }
 
@@ -969,10 +968,16 @@ button {
 .model-item {
   display: flex;
   align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
   gap: 8px;
   padding: 6px 7px;
   border-radius: 6px;
+  background: transparent;
+  font: inherit;
   font-size: 12.5px;
+  text-align: left;
   color: var(--text);
   cursor: pointer;
 }

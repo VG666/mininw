@@ -5,6 +5,7 @@
 #include <shobjidl.h>                     // ITaskbarList3：win.setProgressBar
 #include <winspool.h>                     // EnumPrintersW：win.getPrinters（windows.h 不自动带）
 #include <winver.h>                       // GetFileVersionInfoW：启动页显示内核版本（version.lib）
+#include <windowsx.h>
 
 #include <algorithm>
 #include <atomic>
@@ -26,6 +27,10 @@ namespace nw {
 namespace {
 
 const wchar_t* kWndClass = L"NwBridgeHostFrame";
+
+// 无边框窗口的边框缩放（实现在下方 BorderChildProc 一带）：把客户区子窗口类化，
+// 让边缘带的命中测试交回框架窗口。开窗和 WM_PARENTNOTIFY 都要用，先在这里声明。
+void InstallBorderHitTest(HWND frame, int depth);
 
 // 一个内核视图只允许绑一个 param，而页面回调里要能反查窗口号。
 std::map<WebView, NwWindow*> g_viewToWindow;
@@ -1214,6 +1219,13 @@ int Host::OpenWindow(const std::string& urlJson, NwWindow* opener) {
     window->resizable = resizable;
     window->alwaysOnTop = config.boolean("always-on-top", defaults.boolean("always-on-top", false));
     window->title = Utf8ToWide(config.text("title", defaults.text("title", manifest_.name)));
+    // manifest 的 min_width/min_height/max_width/max_height（nw.js 的 window 段语义）：
+    // 落进 minW/minH/maxW/maxH，由 WM_GETMINMAXINFO 拦拖拽、ApiWindow 拦编程式缩放。
+    // 无边框窗口的边框缩放也走前者，所以这里必须填，否则能拖到远小于声明的最小尺寸。
+    window->minW = static_cast<int>(numberOr("min_width", 0));
+    window->minH = static_cast<int>(numberOr("min_height", 0));
+    window->maxW = static_cast<int>(numberOr("max_width", 0));
+    window->maxH = static_cast<int>(numberOr("max_height", 0));
 
     DWORD style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     if (frameless || kiosk) style = WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
@@ -1294,6 +1306,9 @@ int Host::OpenWindow(const std::string& urlJson, NwWindow* opener) {
         return 0;
     }
     window->view = view;
+    // 边框缩放：客户区里承载页面的子窗口要类化，命中测试才交得回框架窗口（见 BorderChildProc）。
+    // 后建的子窗口由 HostWndProc 的 WM_PARENTNOTIFY 补装。
+    InstallBorderHitTest(hwnd, 1);
     // mb108 的 Node bridge 是按 view 的 debug 配置开启的，必须早于首个页面加载。
     // nodejs:false / --nw-no-node 必须同时关掉 debug 配置和 view 开关；否则内核仍会
     // 把 nw.exe 的宿主参数误当成 Node 主模块，页面随即退出。
@@ -1459,6 +1474,117 @@ void StartWindowDrag(NwWindow* window) {
     SetCapture(window->hwnd);
 }
 
+// ---------------------------------------------------------------------------
+// 无边框窗口的边框缩放
+//
+// 无边框窗口是 WS_POPUP，系统不画可拖拽的边框，命中测试得由宿主自己答。答在
+// **框架窗口**里（见 HostWndProc 的 WM_NCHITTEST）只是必要条件，不充分：内核/桥
+// 会在客户区里铺一层（或多层）子窗口承载页面，真实鼠标的命中测试落在最深的那层
+// 子窗口上，它默认回 HTCLIENT，框架窗口的 WM_NCHITTEST 在真实输入下根本收不到
+// （直接 SendMessage 才会走到）。所以子窗口也要类化：只在边框带上返回
+// HTTRANSPARENT —— 同线程下命中测试会继续往父窗口问，父窗口再给出 HT*，
+// 系统就按原生方式开始缩放循环。其余位置一律原样放行，页面输入不受影响。
+// ---------------------------------------------------------------------------
+
+const wchar_t* kBorderProcProp = L"NmbBorderOriginalProc";
+// 递归层数上限：够覆盖"浏览器子窗口 + 它自己的渲染/输入子窗口"，再深就不碰了。
+constexpr int kBorderSubclassDepth = 4;
+
+// 边框带宽度：SM_CXSIZEFRAME 是外框厚度，SM_CXPADDEDBORDER 是 DPI 附加量，
+// 两者相加才是系统实际的缩放热区；下限 6px 保证高 DPI 缩放下也拖得住。
+int BorderBandWidth() {
+    return std::max(6, GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER));
+}
+
+// 屏幕坐标落在边框带上就返回对应的 HT*，否则 0。
+// 只有"无边框 + 可缩放 + 不在最大化/最小化/全屏/kiosk"才给：其余状态没有可视边框，
+// 给了会让页面边缘 8px 白白吃掉点击。这些标志都是运行时可变（setResizable 等），
+// 所以每次命中测试都重新读，不缓存。
+int BorderResizeHitTest(const NwWindow* window, POINT screenPoint) {
+    if (!window || !window->hwnd || !window->frameless || !window->resizable) return 0;
+    if (window->maximized || window->minimized || window->fullscreen || window->kiosk) return 0;
+    RECT rect{};
+    if (!GetWindowRect(window->hwnd, &rect)) return 0;
+    const int edge = BorderBandWidth();
+    const bool left = screenPoint.x >= rect.left && screenPoint.x < rect.left + edge;
+    const bool right = screenPoint.x < rect.right && screenPoint.x >= rect.right - edge;
+    const bool top = screenPoint.y >= rect.top && screenPoint.y < rect.top + edge;
+    const bool bottom = screenPoint.y < rect.bottom && screenPoint.y >= rect.bottom - edge;
+    if (top && left) return HTTOPLEFT;
+    if (top && right) return HTTOPRIGHT;
+    if (bottom && left) return HTBOTTOMLEFT;
+    if (bottom && right) return HTBOTTOMRIGHT;
+    if (left) return HTLEFT;
+    if (right) return HTRIGHT;
+    if (top) return HTTOP;
+    if (bottom) return HTBOTTOM;
+    return 0;
+}
+
+// 反查子窗口所属的 NwWindow：沿祖先链找到框架窗口，它的 USERDATA 就是 NwWindow*。
+// 不能只看直接父窗口——内核可能再套一层自己的渲染子窗口，那一层的父窗口不是框架窗口。
+// 类名也要核对：别的窗口的 USERDATA 未必是 NwWindow*，直接解引用就是野指针。
+NwWindow* WindowOfChild(HWND child) {
+    for (HWND parent = GetParent(child); parent; parent = GetParent(parent)) {
+        wchar_t className[64]{};
+        if (GetClassNameW(parent, className, 64) == 0) return nullptr;
+        if (wcscmp(className, kWndClass) != 0) continue;
+        NwWindow* window = reinterpret_cast<NwWindow*>(GetWindowLongPtrW(parent, GWLP_USERDATA));
+        return (window && window->hwnd == parent) ? window : nullptr;
+    }
+    return nullptr;
+}
+
+// 子窗口过程：命中测试落在边框带上就交出（HTTRANSPARENT），其余消息原样转给被换掉的原过程。
+LRESULT CALLBACK BorderChildProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_NCHITTEST) {
+        NwWindow* window = WindowOfChild(hwnd);
+        if (window && BorderResizeHitTest(window, POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)}) != 0) {
+            return HTTRANSPARENT;
+        }
+    }
+    // 子窗口自己再建的窗口（内核的渲染层）收不到框架窗口的 WM_PARENTNOTIFY，得在这里补装。
+    if (message == WM_PARENTNOTIFY && LOWORD(wparam) == WM_CREATE) {
+        InstallBorderHitTest(hwnd, 1);
+    }
+    const auto original = reinterpret_cast<WNDPROC>(GetPropW(hwnd, kBorderProcProp));
+    if (!original) return DefWindowProcW(hwnd, message, wparam, lparam);
+    return CallWindowProcW(original, hwnd, message, wparam, lparam);
+}
+
+// 类化一个子窗口。装过就跳过：属性在 = 这条链上已经有我们，**不管现在最外层是谁**。
+// 内核/桥可能在之后又把窗口类化一次，那时若还照"最外层不是我们"就再装一遍，
+// 会把它们的窗口过程从链上挤掉（我们只记得最初的原过程）。装过即跳过，
+// 既保住它们的链，也让我们的命中测试继续留在链里。
+void SubclassBorderWindow(HWND child, DWORD ownerThread) {
+    if (!child) return;
+    if (GetPropW(child, kBorderProcProp)) return;
+    // 只碰本线程创建的窗口。内核/桥会把 IME 之类系统窗口也挂在框架窗口下，它们由
+    // 自己的线程创建、消息也在那条线程上派发；跨线程换窗口过程是 Win32 明确不建议的
+    // 做法，而且这些窗口不承载页面、永远收不到命中测试，类化它们没有收益只有风险。
+    if (GetWindowThreadProcessId(child, nullptr) != ownerThread) return;
+    const LONG_PTR previous = SetWindowLongPtrW(child, GWLP_WNDPROC,
+                                                reinterpret_cast<LONG_PTR>(&BorderChildProc));
+    if (!previous) return;
+    if (!SetPropW(child, kBorderProcProp, reinterpret_cast<HANDLE>(previous))) {
+        SetWindowLongPtrW(child, GWLP_WNDPROC, previous);   // 属性存不下就整个退回
+    }
+}
+
+// 递归装：命中测试落在最深的那层子窗口上，所以整条子窗口链都要装。
+void InstallBorderHitTest(HWND parent, int depth, DWORD ownerThread) {
+    if (!parent || depth > kBorderSubclassDepth) return;
+    for (HWND child = GetWindow(parent, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
+        SubclassBorderWindow(child, ownerThread);
+        InstallBorderHitTest(child, depth + 1, ownerThread);
+    }
+}
+
+// 从框架窗口起装：ownerThread 就是宿主 UI 线程（框架窗口属于它）。
+void InstallBorderHitTest(HWND frame, int depth) {
+    InstallBorderHitTest(frame, depth, GetWindowThreadProcessId(frame, nullptr));
+}
+
 } // namespace
 
 LRESULT CALLBACK HostWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -1507,6 +1633,13 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         window->dragging = false;
     }
 
+    if (message == WM_NCHITTEST) {
+        // 边框缩放由框架窗口作答；命中测试本来会先落在客户区子窗口上，
+        // 那些子窗口已被 InstallBorderHitTest 类化，在边框带上放行到这里。
+        const int hit = BorderResizeHitTest(window, POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)});
+        if (hit != 0) return hit;
+    }
+
     switch (message) {
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL: {
@@ -1535,6 +1668,11 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         }
         break;
     }
+    case WM_PARENTNOTIFY:
+        // 内核/桥在页面加载过程中会陆续往客户区里挂子窗口；创建时补装一次边框命中测试，
+        // 免得只有建窗那一刻存在的子窗口被类化、后建的又回到 HTCLIENT 吃掉边缘。
+        if (LOWORD(wparam) == WM_CREATE) InstallBorderHitTest(hwnd, 1);
+        break;
     case WM_SIZE: {
         if (!window || !window->view) break;
         const int width = LOWORD(lparam);

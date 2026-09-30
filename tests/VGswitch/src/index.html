@@ -156,10 +156,10 @@
       <span class="dot stopped" id="proxyDot"></span>
       <svg class="icon" style="width:14px;height:14px"><use href="#i-globe" xlink:href="#i-globe"/></svg>
       <span id="usageText">代理已停止</span>
-      <span class="switch">
+      <label class="switch" for="usageToggle">
         <input type="checkbox" id="usageToggle">
         <span class="slider"></span>
-      </span>
+      </label>
     </div>
 
     <div class="spacer"></div>
@@ -248,6 +248,16 @@
     </div>
 
     <div class="field">
+      <div class="field-head">
+        <label for="eModelsPath">模型列表接口路径</label>
+        <button class="btn sm" id="btnRefreshModels" type="button">刷新模型</button>
+      </div>
+      <input id="eModelsPath" type="text" placeholder="/v1/models" autocomplete="off">
+      <div class="field-note">读取该上游可用模型；选中下方模型后会填入“具体模型名称”。</div>
+      <div class="model-list" id="eModelList" aria-live="polite"></div>
+    </div>
+
+    <div class="field">
       <label for="eKey">上游 API Key</label>
       <div class="inline">
         <input id="eKey" type="password" placeholder="sk-..." autocomplete="off">
@@ -259,6 +269,11 @@
 
     <div class="field">
       <label class="check"><input id="eEnabled" type="checkbox" style="width:14px;height:14px"> 启用此模型（关闭则代理不会选用）</label>
+    </div>
+
+    <div class="field">
+      <label class="check"><input id="eTlsInsecure" type="checkbox" style="width:14px;height:14px"> HTTPS 上游允许不校验证书（仅用于自签名或缺失中间证书）</label>
+      <div class="field-note">默认校验证书。优先修复上游证书链；开启后仅影响此项代理转发。</div>
     </div>
 
     <div class="adv" id="advBox">
@@ -337,6 +352,11 @@
 <div class="mask" id="settingsMask">
   <div class="dialog">
     <h3>应用设置</h3>
+    <div class="field">
+      <label for="defaultModelSelect">默认选择模型</label>
+      <select id="defaultModelSelect"></select>
+      <div class="field-note">这里设置每个组关闭“自动选择”时使用的当前项；客户端请求仍使用组名，转发时使用项内的具体模型名。</div>
+    </div>
     <div class="field">
       <label class="check"><input id="optMinimizeToTray" type="checkbox" style="width:14px;height:14px"> 关闭窗口时最小化到托盘</label>
       <div class="field-note">开启后，点击标题栏 <b>×</b> 只隐藏窗口到系统托盘，代理继续运行；要真正结束请在托盘菜单或设置菜单里点「退出」。</div>

@@ -95,7 +95,11 @@
       name: '',            // 上送给上游的具体模型名（如 gpt-4o）
       baseUrl: '',         // 上游 base，如 https://api.openai.com/v1
       apiKey: '',          // 上游密钥
+      modelsPath: '/v1/models',
+      models: [],
+      modelsAt: 0,
       enabled: true,       // 是否启用（关闭则自动选择不会选用）
+      tlsInsecure: false,  // 仅针对自签名/缺失中间证书的 HTTPS 上游关闭校验
       color: '#7c5cff',
       headroom: null       // 单独设置的 Headroom：{ enabled:true, url:'' }；null 表示用全局
     };
@@ -111,7 +115,7 @@
   function seedGroups() {
     return [
       {
-        id: 'g-default', name: 'gpt-4o', autoSelect: false, activeItemId: null,
+        id: 'g-default', name: 'gpt-4o', enabled: true, autoSelect: false, activeItemId: null,
         items: [
           newProvider({
             id: 'p-openai', name: 'gpt-4o', color: ITEM_PALETTE[1],
@@ -171,6 +175,7 @@
           groups.push({
             id: rg.id || ('g' + Date.now().toString(36) + g),
             name: rg.name || '未命名组',
+            enabled: rg.enabled !== false,
             items: items,
             autoSelect: !!rg.autoSelect,
             activeItemId: rg.activeItemId || (items[0] ? items[0].id : null)
@@ -180,10 +185,11 @@
       } else if (raw.providers && raw.providers.length) {
         var migrated = [];
         for (var j = 0; j < raw.providers.length; j++) migrated.push(migrateItem(raw.providers[j]));
-        state.groups = [{ id: 'default', name: '默认组', items: migrated, autoSelect: false, activeItemId: migrated[0] ? migrated[0].id : null }];
+        state.groups = [{ id: 'default', name: '默认组', enabled: true, items: migrated, autoSelect: false, activeItemId: migrated[0] ? migrated[0].id : null }];
       }
       state.activeGroupId = raw.activeGroupId || null;
       if (state.activeGroupId && !findGroup(state.activeGroupId)) state.activeGroupId = null;
+      normalizeAllGroupSelections();
     } catch (err) {
       /* 数据损坏就用默认数据继续启动 */
     }
@@ -197,7 +203,11 @@
     item.name = raw.name || raw.model || '';
     item.baseUrl = raw.baseUrl || raw.url || '';
     item.apiKey = raw.apiKey || '';
+    item.modelsPath = normalizePath(raw.modelsPath || '/v1/models');
+    item.models = Array.isArray(raw.models) ? raw.models.filter(function (name) { return typeof name === 'string' && name; }) : [];
+    item.modelsAt = Number(raw.modelsAt) || 0;
     item.enabled = raw.enabled !== false;
+    item.tlsInsecure = raw.tlsInsecure === true;
     item.color = raw.color || item.color;
     if (raw.headroom && raw.headroom.enabled) item.headroom = { enabled: true, url: raw.headroom.url || '' };
     return item;
@@ -537,6 +547,30 @@
     return null;
   }
 
+  function normalizeGroupSelection(group) {
+    if (!group) return;
+    var active = null;
+    for (var i = 0; i < group.items.length; i++) {
+      if (group.items[i].id === group.activeItemId && group.items[i].enabled !== false) {
+        active = group.items[i];
+        break;
+      }
+    }
+    if (!active) {
+      for (var j = 0; j < group.items.length; j++) {
+        if (group.items[j].enabled !== false) {
+          active = group.items[j];
+          break;
+        }
+      }
+    }
+    group.activeItemId = active ? active.id : null;
+  }
+
+  function normalizeAllGroupSelections() {
+    for (var i = 0; i < state.groups.length; i++) normalizeGroupSelection(state.groups[i]);
+  }
+
   function allItems() {
     var out = [];
     for (var g = 0; g < state.groups.length; g++) out = out.concat(state.groups[g].items);
@@ -585,9 +619,9 @@
     }
     return '<div class="card-actions">' +
       btn('edit', '编辑项', 'i-edit') +
-      '<label class="switch sm" title="启用 / 禁用此模型">' +
-      '<input type="checkbox" data-act="toggle-enabled" data-id="' + item.id + '"' +
-      (item.enabled !== false ? ' checked' : '') + '><span class="slider"></span></label>' +
+      '<label class="switch sm" data-act="toggle-enabled" data-id="' + item.id + '" title="启用 / 禁用此模型">' +
+      '<input type="checkbox"' + (item.enabled !== false ? ' checked' : '') +
+      '><span class="slider"></span></label>' +
       btn('remove', '删除项', 'i-trash', 'danger') +
       '</div>';
   }
@@ -627,7 +661,7 @@
 
   /** 单个项（组内一个具体模型/上游）的卡片。 */
   function itemCardHtml(group, item) {
-    var active = item.id === group.activeItemId;
+    var active = !group.autoSelect && item.id === group.activeItemId;
     var tags = '';
     if (active) tags += '<span class="tag active-tag">当前项</span>';
     tags += (item.enabled === false)
@@ -676,6 +710,8 @@
     var group = findGroup(id);
     if (!group) return;
     group.autoSelect = !group.autoSelect;
+    rrCounters[group.id] = 0;
+    normalizeGroupSelection(group);
     render();
     save();
   }
@@ -687,7 +723,16 @@
     var group = groupOfItem(id);
     if (!group) { render(); save(); return; }
     if (!item.enabled && group.activeItemId === id) group.activeItemId = null;
-    if (item.enabled && !group.activeItemId) group.activeItemId = id;
+    normalizeGroupSelection(group);
+    render();
+    save();
+  }
+
+  function toggleGroupEnabled(id) {
+    var group = findGroup(id);
+    if (!group) return;
+    group.enabled = group.enabled === false ? true : false;
+    rrCounters[group.id] = 0;
     render();
     save();
   }
@@ -698,16 +743,20 @@
   }
 
   function groupCardHtml(group) {
+    var enabled = group.enabled !== false;
     return '<article class="card group-card" data-type="group" data-id="' + esc(group.id) + '" ' +
       'title="进入该组">' +
       '<svg class="icon group-ico"><use href="#i-folder" xlink:href="#i-folder"/></svg>' +
       '<div class="card-main">' +
       '<div class="card-title"><span class="name">' + esc(group.name) + '</span>' +
-      (group.autoSelect ? '<span class="tag auto-tag">自动</span>' : '') + '</div>' +
+      (group.autoSelect ? '<span class="tag auto-tag">自动</span>' : '') +
+      (enabled ? '<span class="tag on-tag">已启用</span>' : '<span class="tag off-tag">已禁用</span>') + '</div>' +
       '<div class="card-sub">' + group.items.length + ' 个项 · 点击进入</div>' +
       '</div>' +
       '<div class="card-actions">' +
       groupActionBtn('group-edit', '重命名组', 'i-edit') +
+      '<label class="switch sm" data-act="group-toggle-enabled" title="启用 / 禁用此组">' +
+      '<input type="checkbox"' + (enabled ? ' checked' : '') + '><span class="slider"></span></label>' +
       groupActionBtn('group-remove', '删除组', 'i-trash', 'danger') +
       '</div></article>';
   }
@@ -739,8 +788,11 @@
   function activate(id) {
     var group = groupOfItem(id);
     if (!group) return;
-    group.activeItemId = id;
     var item = find(id);
+    if (!item || item.enabled === false) return;
+    group.autoSelect = false;
+    group.activeItemId = id;
+    rrCounters[group.id] = 0;
     render();
     save();
     if (item) toast('已设为当前项：' + item.name);
@@ -849,6 +901,7 @@
       target.models = result.models || [];
       target.modelsAt = Date.now();
       render();
+      if (editId === id) renderEditModels(target);
       save();
       toast(target.name + '：' + target.models.length + ' 个模型');
     });
@@ -876,7 +929,7 @@
     });
     var group = findGroup(state.activeGroupId) || state.groups[0] || null;
     if (!group) {
-      group = { id: 'g' + Date.now().toString(36), name: '默认组', autoSelect: false, activeItemId: null, items: [] };
+      group = { id: 'g' + Date.now().toString(36), name: '默认组', enabled: true, autoSelect: false, activeItemId: null, items: [] };
       state.groups.push(group);
     }
     group.items.push(item);
@@ -916,6 +969,7 @@
           var name = items[i].name;
           items.splice(i, 1);
           if (state.groups[g].activeItemId === id) state.groups[g].activeItemId = null;
+          normalizeGroupSelection(state.groups[g]);
           render();
           save();
           toast('已删除 ' + name);
@@ -1042,6 +1096,26 @@
   // ---------------------------------------------------------------- 应用设置（窗口行为）
 
   function openAppSettings() {
+    var select = el('defaultModelSelect');
+    var html = '';
+    for (var i = 0; i < state.groups.length; i++) {
+      var group = state.groups[i];
+      normalizeGroupSelection(group);
+      html += '<option value="" disabled>' + esc(group.name) +
+        (group.enabled === false ? '（组已禁用）' : '') + '</option>';
+      html += '<option value="' + esc(group.id + '|auto') + '"' +
+        (group.autoSelect ? ' selected' : '') +
+        (group.enabled === false ? ' disabled' : '') + '>自动选择（' + esc(group.name) + '）</option>';
+      for (var j = 0; j < group.items.length; j++) {
+        var item = group.items[j];
+        html += '<option value="' + esc(group.id + '|' + item.id) + '"' +
+          (!group.autoSelect && item.id === group.activeItemId ? ' selected' : '') +
+          (item.enabled === false ? ' disabled' : '') + '>' +
+          esc(group.name + ' → ' + (item.name || '(未命名模型)')) +
+          (item.enabled === false ? '（已禁用）' : '') + '</option>';
+      }
+    }
+    select.innerHTML = html || '<option value="">暂无模型项</option>';
     el('optMinimizeToTray').checked = !!state.minimizeToTray;
     el('settingsMask').classList.add('show');
   }
@@ -1051,7 +1125,24 @@
   });
 
   document.getElementById('btnSettingsSave').addEventListener('click', function () {
+    var selected = el('defaultModelSelect').value || '';
+    var split = selected.split('|');
+    if (split.length === 2) {
+      var selectedGroup = findGroup(split[0]);
+      if (selectedGroup && split[1] === 'auto') {
+        selectedGroup.autoSelect = true;
+        rrCounters[selectedGroup.id] = 0;
+      } else if (selectedGroup) {
+        var selectedItem = find(split[1]);
+        if (selectedItem && selectedItem.enabled !== false && groupOfItem(selectedItem.id) === selectedGroup) {
+          selectedGroup.autoSelect = false;
+          selectedGroup.activeItemId = selectedItem.id;
+          rrCounters[selectedGroup.id] = 0;
+        }
+      }
+    }
     state.minimizeToTray = el('optMinimizeToTray').checked;
+    normalizeAllGroupSelections();
     save();
     el('settingsMask').classList.remove('show');
     renderProxyStatus(); // 顺带刷新托盘菜单（提示语会跟着开关变化）
@@ -1203,7 +1294,7 @@
         authRequired: !!state.proxy.key,
         headroom: !!(state.headroom.enabled && state.headroom.url),
         groups: state.groups.map(function (g) {
-          return { name: g.name, items: g.items.length, autoSelect: !!g.autoSelect };
+          return { name: g.name, enabled: g.enabled !== false, items: g.items.length, autoSelect: !!g.autoSelect };
         })
       });
     }
@@ -1217,7 +1308,7 @@
       }
     }
     if (req.method === 'GET' && pathname === '/v1/models') {
-      var data = state.groups.map(function (g) {
+      var data = state.groups.filter(function (g) { return g.enabled !== false; }).map(function (g) {
         return { id: g.name, object: 'model', owned_by: 'vg-switch', created: 0, permission: ['read', 'write'] };
       });
       return sendJson(res, 200, { object: 'list', data: data });
@@ -1243,19 +1334,26 @@
       var group = null;
       for (var g = 0; g < state.groups.length; g++) if (state.groups[g].name === modelName) { group = state.groups[g]; break; }
       if (!group) return sendJson(res, 404, { error: { message: '没有名为「' + modelName + '」的组/模型' } });
+      if (group.enabled === false) return sendJson(res, 503, { error: { message: '组「' + modelName + '」已禁用' } });
       var item = selectItem(group);
       if (!item) return sendJson(res, 503, { error: { message: '该组没有可用的启用项' } });
-      var target = buildTarget(resolveHeadroom(item) || item.baseUrl, pathname);
+      if (body && typeof body === 'object') {
+        body.model = item.name;
+      } else if (parsed.query && parsed.query.model) {
+        parsed.query.model = item.name;
+      }
+      var targetPath = urlMod.format({ pathname: pathname, query: parsed.query });
+      var target = buildTarget(resolveHeadroom(item) || item.baseUrl, targetPath);
       if (!target) return sendJson(res, 502, { error: { message: '项未配置上游地址' } });
-      if (body && typeof body === 'object') body.model = item.name;
-      forwardToUpstream(req, res, target, body, item.apiKey);
+      forwardToUpstream(req, res, target, body, item.apiKey, item.tlsInsecure === true);
     });
     req.on('error', function () { try { res.end(); } catch (e) {} });
   }
 
-  function forwardToUpstream(req, res, target, body, apiKey) {
+  function forwardToUpstream(req, res, target, body, apiKey, tlsInsecure) {
     var options = urlMod.parse(target);
     options.method = req.method;
+    if (options.protocol === 'https:') options.rejectUnauthorized = !tlsInsecure;
     options.headers = {};
     var src = req.headers || {};
     for (var key in src) {
@@ -1280,7 +1378,12 @@
     upstream.on('close', done);
     upstream.on('error', function (err) {
       done();
-      if (!res.headersSent) sendJson(res, 502, { error: { message: '上游连接失败：' + err.message } });
+      if (!res.headersSent) {
+        var hint = err && err.code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY'
+          ? '；请检查上游证书链，或在该项高级选项中临时关闭证书校验'
+          : '';
+        sendJson(res, 502, { error: { message: '上游连接失败：' + err.message + hint, code: err && err.code || '' } });
+      }
       else { try { res.end(); } catch (e) {} }
     });
     res.on('close', function () {
@@ -1297,6 +1400,13 @@
   // ---------------------------------------------------------------- 组管理
 
   var groupEditId = null;
+
+  function groupNameTaken(name, ignoreId) {
+    for (var i = 0; i < state.groups.length; i++) {
+      if (state.groups[i].id !== ignoreId && state.groups[i].name === name) return true;
+    }
+    return false;
+  }
 
   function openGroupDialog(id) {
     groupEditId = id || null;
@@ -1317,6 +1427,10 @@
       toast('请填写组名称');
       return;
     }
+    if (groupNameTaken(name, groupEditId)) {
+      toast('组名称已存在，请换一个名称');
+      return;
+    }
     if (groupEditId) {
       var group = findGroup(groupEditId);
       if (group) {
@@ -1324,7 +1438,7 @@
         toast('已重命名为 ' + name);
       }
     } else {
-      state.groups.push({ id: 'g' + Date.now().toString(36), name: name, items: [] });
+      state.groups.push({ id: 'g' + Date.now().toString(36), name: name, enabled: true, autoSelect: false, activeItemId: null, items: [] });
       toast('已新建组 ' + name);
     }
     el('addGroupMask').classList.remove('show');
@@ -1434,13 +1548,32 @@
     el('eAvatar').style.background = item.color || '#555';
     el('eName').value = item.name || '';
     el('eBase').value = item.baseUrl || '';
+    el('eModelsPath').value = item.modelsPath || '/v1/models';
+    renderEditModels(item);
     el('eKey').value = item.apiKey || '';
     el('eKey').type = 'password';
     el('eEnabled').checked = item.enabled !== false;
+    el('eTlsInsecure').checked = item.tlsInsecure === true;
     var hr = item.headroom || {};
     el('eHrEnabled').checked = !!hr.enabled;
     el('eHrUrl').value = hr.url || '';
     el('editMask').classList.add('show');
+  }
+
+  function renderEditModels(item) {
+    var list = el('eModelList');
+    var models = item && item.models ? item.models : [];
+    if (!models.length) {
+      list.innerHTML = '<div class="field-note">暂无模型列表，请刷新或手动填写模型名称。</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < models.length; i++) {
+      html += '<button class="model-item" type="button" data-model-name="' + esc(models[i]) + '">' +
+        '<span>' + esc(models[i]) + '</span>' +
+        (item.name === models[i] ? '<span class="model-tag">当前</span>' : '') + '</button>';
+    }
+    list.innerHTML = html;
   }
 
   function closeEdit() {
@@ -1448,8 +1581,26 @@
     el('editMask').classList.remove('show');
   }
 
+  el('eModelList').addEventListener('click', function (event) {
+    var button = event.target;
+    while (button && button !== this && !(button.getAttribute && button.getAttribute('data-model-name'))) {
+      button = button.parentNode;
+    }
+    if (!button || button === this) return;
+    el('eName').value = button.getAttribute('data-model-name');
+  });
+
+  el('btnRefreshModels').addEventListener('click', function () {
+    var item = find(editId);
+    if (!item) return;
+    item.modelsPath = normalizePath(el('eModelsPath').value || '/v1/models');
+    save();
+    refreshModels(editId);
+  });
+
   el('btnEditBack').addEventListener('click', closeEdit);
   el('btnEditCancel').addEventListener('click', closeEdit);
+
 
   el('advHead').addEventListener('click', function () {
     el('advBox').classList.toggle('open');
@@ -1469,8 +1620,11 @@
     if (!base) { toast('请填写上游地址'); return; }
     item.name = name;
     item.baseUrl = base;
+    item.modelsPath = normalizePath(el('eModelsPath').value || '/v1/models');
     item.apiKey = el('eKey').value.trim();
+    renderEditModels(item);
     item.enabled = el('eEnabled').checked;
+    item.tlsInsecure = el('eTlsInsecure').checked;
     item.headroom = el('eHrEnabled').checked
       ? { enabled: true, url: el('eHrUrl').value.trim() }
       : null;
@@ -1888,6 +2042,7 @@
       var act = actionBtn.getAttribute('data-act');
       if (type === 'group') {
         if (act === 'group-edit') openGroupDialog(id);
+        else if (act === 'group-toggle-enabled') toggleGroupEnabled(id);
         else if (act === 'group-remove') askRemoveGroup(id);
         return;
       }
@@ -1916,6 +2071,7 @@
       event.preventDefault();
       showMenuXY(event.clientX, event.clientY, [
         { label: '重命名组', icon: 'i-edit', run: function () { openGroupDialog(id); } },
+        { label: (group.enabled === false ? '启用此组' : '禁用此组'), icon: 'i-eye', run: function () { toggleGroupEnabled(id); } },
         { label: '删除组', icon: 'i-trash', run: function () { askRemoveGroup(id); } }
       ]);
       return;

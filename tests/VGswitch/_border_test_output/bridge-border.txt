@@ -1,0 +1,2 @@
+hwnd=0x7e13c2 pid=36092 class='NwBridgeHostFrame' text='VG Switch' visible=True rect=(680, 276, 1760, 1036) style=-0x6a000000 ex=0x00000000
+  hwnd=0x13a1374 pid=36092 class='NativeMediaBridgeHostWindow' text='about:blank' visible=True rect=(680, 276, 1760, 1036) style=0x56000000 ex=0x00000000
